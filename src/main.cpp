@@ -13,7 +13,7 @@ OneButton btn_down(16, true);
 OneButton btn_right(10, true);
 
 #define MOTOR_STEPS 200
-#define RPM 120
+#define RPM 30
 #define MICROSTEPS 16
 #define ADC_DIVIDER 3.235
 
@@ -524,7 +524,11 @@ void setup(void)
   timer2.start();
   timer3.start();
   Serial.println("And so it begins...");
-  stepper.startMove(100 * (long)MOTOR_STEPS * (long)MICROSTEPS);
+  dolly.Shots_total=20;
+  dolly.Interval=1;
+  dolly.Exposure=1;
+  dolly.Angle=90;
+  stepper.rotate(90);
 }
 
 void loop(void)
