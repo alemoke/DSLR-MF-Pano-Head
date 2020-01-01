@@ -12,10 +12,12 @@ OneButton btn_left(14, true);
 OneButton btn_down(16, true);
 OneButton btn_right(10, true);
 
-#define MOTOR_STEPS 200
+
 #define RPM 30
 #define MICROSTEPS 16
-#define ADC_DIVIDER 3.235
+#define REDUCTION_RATIO 4.12f
+#define MOTOR_STEPS 200*REDUCTION_RATIO
+#define ADC_DIVIDER 4.24f
 
 #define DIR 9
 #define STEP 8
@@ -30,8 +32,16 @@ const uint8_t EXTRA_DELAY = 50;
 #define LEFT 0
 #define RIGHT 1
 
-uint8_t screen = 0;
-uint8_t menu_id = 0;
+U8X8_SSD1306_128X32_UNIVISION_HW_I2C u8x8(/* reset=*/U8X8_PIN_NONE);
+A4988 stepper(MOTOR_STEPS, DIR, STEP);
+
+struct guiS
+{
+  uint8_t current = 0;
+  uint8_t previous = 0;
+  uint8_t menu_id = 0;
+};
+guiS SCREEN;
 
 uint8_t CURRENT_PRESET = 0;
 
@@ -50,7 +60,7 @@ struct dollyS
   float AngleStep;
   bool Direction; //0 - влево 1 - вправо
   bool isHoming;
-  volatile boolean started;
+  volatile boolean started=false;
 };
 dollyS dolly;
 
@@ -125,11 +135,13 @@ void ReadSettings(void)
 
 void SaveSettings(void)
 {
+  Serial.println("Saving EEPROM");
   EEPROM.put((int)&CURRENT_PRESET_addr, CURRENT_PRESET);
   switch (CURRENT_PRESET)
   {
   case 0:
   {
+    Serial.println("Saving Preset 0");
     EEPROM.put((int)&SHOTS_preset1_addr, dolly.Shots_total);
     EEPROM.put((int)&INTERVAL_preset1_addr, dolly.Interval);
     EEPROM.put((int)&EXPOSURE_preset1_addr, dolly.Exposure);
@@ -138,6 +150,7 @@ void SaveSettings(void)
   break;
   case 1:
   {
+     Serial.println("Saving Preset 1");
     EEPROM.put((int)&SHOTS_preset2_addr, dolly.Shots_total);
     EEPROM.put((int)&INTERVAL_preset2_addr, dolly.Interval);
     EEPROM.put((int)&EXPOSURE_preset2_addr, dolly.Exposure);
@@ -147,42 +160,44 @@ void SaveSettings(void)
   default:
     break;
   }
+ Serial.println("EEPROM SAVE Done!");
 }
 
 void click_up()
 {
-  if (menu_id > 0)
-    menu_id--;
+  if (SCREEN.menu_id > 0)
+    SCREEN.menu_id--;
   else
-    menu_id = 3;
+    SCREEN.menu_id = 3;
   Serial.println("Button DOWN click.");
-  Serial.println(menu_id);
+  Serial.println(SCREEN.menu_id);
 } // click1
 
 void click_down()
 {
-  if (menu_id < 3)
-    menu_id++;
+  if (SCREEN.menu_id < 3)
+    SCREEN.menu_id++;
   else
-    menu_id = 0;
+    SCREEN.menu_id = 0;
   Serial.println("Button UP click.");
-  Serial.println(menu_id);
+  Serial.println(SCREEN.menu_id);
 } // click1
 
 void click_left()
 {
   Serial.println("Button LEFT click.");
-  switch (menu_id)
+  switch (SCREEN.menu_id)
   {
   case 0:
-    if (screen == 1)
+    if (SCREEN.current == 1)
     {
       if (dolly.Shots_total > 2)
         dolly.Shots_total--;
       else
         dolly.Shots_total = 300;
+      u8x8.clearLine(SCREEN.menu_id);
     }
-    else if (screen == 2)
+    else if (SCREEN.current == 2)
     {
       if (CURRENT_PRESET > 1)
         CURRENT_PRESET--;
@@ -193,13 +208,15 @@ void click_left()
       dolly.Interval--;
     else
       dolly.Interval = 250;
+    u8x8.clearLine(SCREEN.menu_id);
     break;
 
   case 2:
     if (dolly.Exposure > 2)
       dolly.Exposure--;
     else
-      dolly.Exposure = 250;
+      dolly.Exposure = 60;
+    u8x8.clearLine(SCREEN.menu_id);
     break;
 
   case 3:
@@ -207,6 +224,7 @@ void click_left()
       dolly.Angle--;
     else
       dolly.Angle = 250;
+    u8x8.clearLine(SCREEN.menu_id);
     break;
   default:
     break;
@@ -216,32 +234,35 @@ void click_left()
 void click_right()
 {
   Serial.println("Button RIGHT click.");
-  switch (menu_id)
+  switch (SCREEN.menu_id)
   {
   case 0:
-    if (screen == 1)
+    if (SCREEN.current == 1)
     {
       if (dolly.Shots_total < 400)
         dolly.Shots_total++;
       else
         dolly.Shots_total = 30;
     }
-    else if (screen == 2)
+    else if (SCREEN.current == 2)
       if (CURRENT_PRESET < 1)
         CURRENT_PRESET++;
+    u8x8.clearLine(SCREEN.menu_id);
     break;
   case 1:
     if (dolly.Interval < 250)
       dolly.Interval++;
     else
       dolly.Interval = 1;
+    u8x8.clearLine(SCREEN.menu_id);
     break;
 
   case 2:
-    if (dolly.Exposure < 250)
+    if (dolly.Exposure < 60)
       dolly.Exposure++;
     else
       dolly.Exposure = 1;
+    u8x8.clearLine(SCREEN.menu_id);
     break;
 
   case 3:
@@ -249,6 +270,7 @@ void click_right()
       dolly.Angle++;
     else
       dolly.Angle = 1;
+    u8x8.clearLine(SCREEN.menu_id);
     break;
   default:
     break;
@@ -258,15 +280,18 @@ void click_right()
 void click_center()
 {
   Serial.println("Button CENTER click.");
-  if (screen != 2)
-    screen++;
+  if (SCREEN.current < 2)
+    SCREEN.current++;
   else
-    screen = 0;
-  menu_id = 0;
+    SCREEN.current = 0;
+  if (SCREEN.current != SCREEN.previous)
+  {
+    u8x8.clearDisplay();
+    SCREEN.previous = SCREEN.current;
+  }
+  SCREEN.menu_id = 0;
+  Serial.println(SCREEN.current);
 } // click1
-
-U8X8_SSD1306_128X32_UNIVISION_HW_I2C u8x8(/* reset=*/U8X8_PIN_NONE);
-A4988 stepper(MOTOR_STEPS, DIR, STEP);
 
 void stepmove(void)
 {
@@ -288,15 +313,27 @@ void long_click_center(void)
   if (!dolly.started)
   {
     SaveSettings(); //сохранение настроек в EEPROM
-    screen = 3;
+    SCREEN.current = 3;
+    u8x8.clearDisplay();
     Serial.println("Status: Start");
     dolly.started = true;
     dolly.countdown = dolly.Delay;                     //выставляется первичная задержка запуска
     dolly.AngleStep = dolly.Angle / dolly.Shots_total; //вычисление на какой градус поворачивать голову между кадрами
     dolly.Shots_remains = dolly.Shots_total;
     elapsed_time = 0;
-    remains_time = (dolly.Delay * 1000 + (dolly.Exposure + dolly.Interval) * dolly.Shots_total * 1000 + movedur * dolly.Shots_total + 2000);
+    stepmove();
+    remains_time = dolly.Delay * 1000 + (dolly.Exposure + dolly.Interval) * dolly.Shots_total * 1000 + movedur * dolly.Shots_total;
     //todo: 1.38 Стабильная погрешность. ХЗ откуда она взялась.
+    Serial.print("dolly.Delay: ");
+    Serial.println(dolly.Delay);
+    Serial.print("dolly.Exposure: ");
+    Serial.println(dolly.Exposure);
+    Serial.print("dolly.Interval: ");
+    Serial.println(dolly.Interval);
+    Serial.print("dolly.Shots_total: ");
+    Serial.println(dolly.Shots_total);
+    Serial.print("movedur: ");
+    Serial.println(movedur);
     Serial.print("remains_time: ");
     Serial.println(remains_time);
     Serial.println("HOMING");
@@ -319,28 +356,24 @@ void shot(void)
   uint32_t t1, t2;
   uint8_t i = 0;
   Serial.println("Focus pressed");
-  u8x8.clearLine(3);
-  u8x8.drawString(0, 3, "FOCUS ON");
+  u8x8.drawString(14, 0, "F+");
   digitalWrite(PIN_FOCUS, HIGH); //активация автофокуса
   delay(FOCUS_DELAY);            //пауза между фокусировкой и активацией затвора 0,1с
   elapsed_time += FOCUS_DELAY;
   remains_time -= FOCUS_DELAY;
   Serial.println("Shutter pressed");
-  u8x8.clearLine(3);
-  u8x8.drawString(0, 3, "SHUTTER ON");
+  u8x8.drawString(14, 0, "S");
   digitalWrite(PIN_SHUTTER, HIGH); //активация затвора
   delay(SHUTTER_DELAY);
   elapsed_time += SHUTTER_DELAY;
   remains_time -= SHUTTER_DELAY;
   digitalWrite(PIN_SHUTTER, LOW); //Деактивация затвора
   Serial.println("Shutter released");
-  u8x8.clearLine(3);
-  u8x8.drawString(0, 3, "SHUTTER OFF");
+  u8x8.drawString(15, 0, "-");
   digitalWrite(PIN_FOCUS, LOW); //деактивация автофокуса
   Serial.println("Focus released");
   Serial.println("Wait dolly for settle");
-  u8x8.clearLine(3);
-  u8x8.drawString(0, 3, "DOLLY SETTLE");
+  u8x8.drawString(14, 0, "F");
   delay(SETTLE_DELAY); // пауза 0,5 секундная для того чтобы прекратилась тряска после движения
   elapsed_time += SETTLE_DELAY;
   remains_time -= SETTLE_DELAY;
@@ -351,6 +384,19 @@ void shot(void)
     remains_time -= abs(1000 - SETTLE_DELAY - FOCUS_DELAY - SHUTTER_DELAY);
     Serial.print("Extra delay: ");
     Serial.println(1000 - SETTLE_DELAY - FOCUS_DELAY - SHUTTER_DELAY);
+    u8x8.drawString(0, 0, "ELAPSED");
+    u8x8.setCursor(9, 0);
+    u8x8.print(dolly.Shots_total - dolly.Shots_remains);
+    u8x8.drawString(0, 1, TimeToString(elapsed_time));
+    u8x8.drawString(0, 2, "REMAINS");
+    u8x8.setCursor(9, 2);
+    u8x8.print(dolly.Shots_remains);
+    if (dolly.Shots_remains < 10)
+    {
+      u8x8.setCursor(10, 2);
+      u8x8.print(" ");
+    }
+    u8x8.drawString(0, 3, TimeToString(remains_time));
   }
   else
   {
@@ -376,6 +422,11 @@ void shot(void)
         u8x8.drawString(0, 2, "REMAINS");
         u8x8.setCursor(9, 2);
         u8x8.print(dolly.Shots_remains);
+        if (dolly.Shots_remains < 10)
+        {
+          u8x8.setCursor(10, 2);
+          u8x8.print(" ");
+        }
         u8x8.drawString(0, 3, TimeToString(remains_time));
       }
       else
@@ -398,10 +449,18 @@ void EverySecond(void)
         Serial.print("Countdown: ");
         dolly.countdown--;
         Serial.println(dolly.countdown);
-        u8x8.clearLine(3);
-        u8x8.drawString(0, 3, "COUNTDOWN");
-        u8x8.setCursor(9, 3);
-        u8x8.print(dolly.countdown);
+        if (dolly.countdown < 10)
+        {
+          u8x8.setCursor(14, 0);
+          u8x8.print(" ");
+          u8x8.setCursor(15, 0);
+          u8x8.print(dolly.countdown);
+        }
+        else
+        {
+          u8x8.setCursor(14, 0);
+          u8x8.print(dolly.countdown);
+        }
       }
       else
       {             //пора де лать кадр
@@ -426,7 +485,7 @@ void EverySecond(void)
 void DrawGui(void)
 {
   u8x8.setFont(u8x8_font_saikyosansbold8_u);
-  switch (screen)
+  switch (SCREEN.current)
   {
   case 0:
     u8x8.drawString(0, 0, "IDLE");
@@ -434,10 +493,10 @@ void DrawGui(void)
     u8x8.drawString(0, 2, "START");
     u8x8.drawString(0, 3, "VCC");
     u8x8.setCursor(9, 3);
-    u8x8.print(5 * adc.battery_voltage / 1023.0 * ADC_DIVIDER);
+    u8x8.print(5 * adc.battery_voltage / 1023.0f * ADC_DIVIDER);
     break;
   case 1:
-    if (menu_id == 0)
+    if (SCREEN.menu_id == 0)
       u8x8.setInverseFont(1);
     else
       u8x8.setInverseFont(0);
@@ -445,7 +504,7 @@ void DrawGui(void)
     u8x8.setCursor(9, 0);
     u8x8.setInverseFont(0);
     u8x8.print(dolly.Shots_total);
-    if (menu_id == 1)
+    if (SCREEN.menu_id == 1)
       u8x8.setInverseFont(1);
     else
       u8x8.setInverseFont(0);
@@ -453,7 +512,7 @@ void DrawGui(void)
     u8x8.setCursor(9, 1);
     u8x8.setInverseFont(0);
     u8x8.print(dolly.Interval);
-    if (menu_id == 2)
+    if (SCREEN.menu_id == 2)
       u8x8.setInverseFont(1);
     else
       u8x8.setInverseFont(0);
@@ -461,7 +520,7 @@ void DrawGui(void)
     u8x8.setCursor(9, 2);
     u8x8.setInverseFont(0);
     u8x8.print(dolly.Exposure);
-    if (menu_id == 3)
+    if (SCREEN.menu_id == 3)
       u8x8.setInverseFont(1);
     else
       u8x8.setInverseFont(0);
@@ -471,7 +530,7 @@ void DrawGui(void)
     u8x8.print(dolly.Angle);
     break;
   case 2:
-    if (menu_id == 0)
+    if (SCREEN.menu_id == 0)
       u8x8.setInverseFont(1);
     else
       u8x8.setInverseFont(0);
@@ -517,6 +576,7 @@ void setup(void)
   //button1.attachLongPressStart(longPressStart1);
   //button1.attachDuringLongPress(longPress1);
   stepper.begin(RPM, MICROSTEPS);
+  ReadSettings();
   u8x8.begin();
   u8x8.setPowerSave(0);
   Serial.begin(9600);
@@ -524,11 +584,7 @@ void setup(void)
   timer2.start();
   timer3.start();
   Serial.println("And so it begins...");
-  dolly.Shots_total=20;
-  dolly.Interval=1;
-  dolly.Exposure=1;
-  dolly.Angle=90;
-  stepper.rotate(90);
+  stepper.rotate(360);
 }
 
 void loop(void)
