@@ -539,6 +539,7 @@ void setup(void)
   //button1.attachLongPressStart(longPressStart1);
   //button1.attachDuringLongPress(longPress1);
   stepper.begin(RPM, MICROSTEPS);
+  stepper.setSpeedProfile(stepper.LINEAR_SPEED, 250, 250);
   ReadSettings();
   u8x8.begin();
   u8x8.setPowerSave(0);
@@ -546,6 +547,7 @@ void setup(void)
   timer1.start();
   timer2.start();
   timer3.start();
+  digitalWrite(PIN_EN, LOW);
   Serial.println("And so it begins...");
   stepper.rotate(360);
 }
